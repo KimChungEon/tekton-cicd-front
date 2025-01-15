@@ -1,0 +1,28 @@
+apiVersion: triggers.tekton.dev/v1alpha1
+kind: EventListener
+metadata:
+  name: trigger-eventlistener
+spec:
+  serviceAccountName: tekton-triggers-sa  # 사용할 서비스 계정
+  triggers:
+    - bindings:
+        - ref: github-triggerbinding  # Webhook 데이터를 받아오는 TriggerBinding 참조
+      template:
+        ref: github-triggertemplate # GitHub 데이터를 처리하여 파이프라인을 트리거하는 TriggerTemplate 참조
+---
+
+# Webhook 설정을 위해 NodePort로 열어주는 Service를 별도로 생성.
+# ngrok을 통해 주소를 열어주고 webhook에 등록함.
+apiVersion: v1
+kind: Service
+metadata:
+  name: github-eventlistener
+spec:
+  selector:
+    eventlistener: trigger-eventlistener   # EventListener와 연결
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+      nodePort: 32000
+  type: NodePort

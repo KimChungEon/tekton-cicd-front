@@ -1,0 +1,142 @@
+# Git clone
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: git-clone
+spec:
+  params:
+    - name: git-url
+      description: Git repository URL
+      default: https://github.com/KimChungEon/tekton-cicd-front.git
+    - name: git-revision
+      description: Git branch or tag
+      default: main
+  steps:
+    - name: cleanup
+      image: alpine
+      script: |
+        #!/bin/sh
+        # 기존 작업공간 파일 제거 및 초기
+        echo "Cleaning up existing files in workspace"
+        chmod -R 777 $(workspaces.source.path) || true
+        rm -rf $(workspaces.source.path) || true
+        mkdir -p $(workspaces.source.path)
+
+    - name: clone
+      image: alpine/git
+      script: |
+        #!/bin/sh
+        git clone $(params.git-url) $(workspaces.source.path)
+  workspaces:
+    - name: source   # 작업공간 이름 설정
+
+---
+# Docker 이미지 빌드 및 푸시
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: docker-build-and-push
+spec:
+  params:
+    - name: registry-url
+      description: Harbor registry URL
+      default: harbor.example.com
+    - name: registry-username
+      description: Harbor registry username
+    - name: registry-password
+      description: Harbor registry password
+    - name: fallback-image   # version.txt
+      description: Default Docker image name (used if version.txt is missing)
+      default: harbor.example.com/project/frontend:1.0
+  workspaces:
+    - name: source
+  steps:
+    - name: prepare-docker
+      image: docker:19.03.12-dind
+      securityContext:
+        privileged: true
+      script: |
+        #!/bin/sh
+        apk add --no-cache shadow
+        # Ensure docker group exists
+        if ! getent group docker; then
+          groupadd docker
+        fi
+        # Change /var/run/docker.sock group to docker
+        chgrp docker /var/run/docker.sock
+        chmod g+rwx /var/run/docker.sock
+        # Add current user to docker group
+        usermod -aG docker $(whoami)
+        stat /var/run/docker.sock
+      volumeMounts:
+        - mountPath: /var/run/docker.sock
+          name: docker-socket
+
+    - name: fetch-image-and-tag
+      image: alpine
+      script: |
+        #!/bin/sh
+        set -e
+        version_file=$(workspaces.source.path)/project/frontend/version.txt
+        if [ -f "$version_file" ]; then
+          image=$(cat $version_file)
+          echo "Using image from version.txt: $image"
+        else
+          image=$(params.fallback-image)
+          echo "version.txt not found. Using fallback image: $image"
+        fi
+        echo -n $image > /tekton/results/image
+
+    - name: build
+      image: docker:19.03.12-dind
+      script: |
+        #!/bin/sh
+        dockerd & sleep 5
+        image=$(cat /tekton/results/image)
+        docker build -t $image $(workspaces.source.path)/project/frontend/
+      volumeMounts:
+        - mountPath: /var/run/docker.sock
+          name: docker-socket
+      securityContext:
+        privileged: true
+
+    - name: push
+      image: docker:19.03.12-dind
+      script: |
+        #!/bin/sh
+        image=$(cat /tekton/results/image)
+        docker login $(params.registry-url) \
+          -u $(params.registry-username) \
+          --password $(params.registry-password)
+        docker push $image
+      volumeMounts:
+        - mountPath: /var/run/docker.sock
+          name: docker-socket
+      securityContext:
+        privileged: true
+  results:
+    - name: image
+      description: The Docker image name and tag used
+  volumes:
+    - name: docker-socket
+      hostPath:
+        path: /var/run/docker.sock
+        type: Socket
+---
+
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  name: kubernetes-deploy
+spec:
+  params:
+    - name: manifest
+      description: Path to the Kubernetes manifest file
+  workspaces:
+    - name: source
+  steps:
+    - name: apply
+      image: bitnami/kubectl
+      script: |
+        #!/bin/sh    # 이미지 업데이트
+        kubectl set image deployment/frontend frontend=$(params.image)

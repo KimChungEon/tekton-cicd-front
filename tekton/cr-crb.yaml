@@ -1,0 +1,27 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  # ClusterRole의 이름 지정
+  name: tekton-deploy-role
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tekton-deploy-role-binding
+subjects:
+  - kind: ServiceAccount
+    name: default  # Tekton Pipeline이 사용하는 서비스 계정 이름 (기본값: default)
+    namespace: default  # 서비스 계정이 위치한 네임스페이스
+roleRef:
+  kind: ClusterRole
+  name: tekton-deploy-role
+  apiGroup: rbac.authorization.k8s.io

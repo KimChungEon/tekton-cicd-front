@@ -1,0 +1,10 @@
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: github-triggerbinding
+spec:
+  params:
+    - name: git-url
+      value: $(body.repository.clone_url)  # Webhook에서 repository URL을 가져와 git-url 파라미터에 전달
+    - name: git-revision
+      value: $(body.head_commit.id)   # Webhook에서 커밋 ID를 가져와 git-revision 파라미터에 전달
